@@ -1,73 +1,68 @@
-const express = require("express");
-const qrcode = require("qrcode");
-const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
+import express from "express";
+import qrcode from "qrcode";
+import { Client, LocalAuth } from "whatsapp-web.js";
 
 const app = express();
 app.use(express.json());
 
-let qrData = null;
-
+// WhatsApp client
 const client = new Client({
-    authStrategy: new LocalAuth({
-        dataPath: './wwebjs_auth'
-    }),
+    authStrategy: new LocalAuth(),
     puppeteer: {
         args: ["--no-sandbox", "--disable-setuid-sandbox"],
-        headless: true
-    }
+    },
 });
 
-// EVENTO QR
+// Generar QR en variable temporal
+let qrImage = null;
+
+// Eventos
 client.on("qr", async (qr) => {
-    console.log("📲 Nuevo QR generado");
-    qrData = qr; 
+    qrImage = await qrcode.toDataURL(qr);
+    console.log("QR actualizado, listo para escanear.");
 });
 
-// EVENTO READY
 client.on("ready", () => {
-    console.log("✅ WhatsApp conectado y listo");
+    console.log("WhatsApp conectado exitosamente.");
 });
 
-// LOG DE ERRORES
-client.on("auth_failure", () => console.log("❌ Falló la autenticación"));
-client.on("disconnected", () => console.log("⚠ Cliente desconectado"));
+client.on("authenticated", () => {
+    console.log("Autenticado!");
+});
 
-client.initialize();
+client.on("auth_failure", msg => {
+    console.log("ERROR de autenticación:", msg);
+});
 
-// ============ ENDPOINTS ============
-
-// QR como imagen PNG
-app.get("/qr.png", async (req, res) => {
-    if (!qrData) return res.status(404).send("QR no disponible");
-
-    const png = await qrcode.toBuffer(qrData);
+// Endpoints
+app.get("/qr.png", (req, res) => {
+    if (!qrImage) return res.status(503).send("QR aún no generado.");
+    const base64 = qrImage.split(",")[1];
+    const buffer = Buffer.from(base64, "base64");
     res.setHeader("Content-Type", "image/png");
-    res.send(png);
+    res.send(buffer);
 });
 
-// Enviar mensaje
 app.post("/send-message", async (req, res) => {
+    const { number, message } = req.body;
+
+    if (!number || !message)
+        return res.status(400).json({ error: "number y message son requeridos" });
+
     try {
-        let { number, message } = req.body;
-        
-        if (!number || !message) {
-            return res.status(400).json({ error: "Falta number o message" });
-        }
+        const finalNumber = number.includes("@c.us")
+            ? number
+            : `${number}@c.us`;
 
-        number = number + "@c.us";
+        await client.sendMessage(finalNumber, message);
 
-        await client.sendMessage(number, message);
-
-        console.log(`📤 Mensaje enviado a ${number}`);
-
-        res.json({ status: "ok" });
+        res.json({ status: "sent", number, message });
     } catch (err) {
-        console.error("❌ Error enviando mensaje", err);
-        res.status(500).json({ error: "Error interno" });
+        console.error(err);
+        res.status(500).json({ error: "Error al enviar mensaje" });
     }
 });
 
-// Servidor web interno
-app.listen(3000, () => {
-    console.log("🌐 API WhatsApp lista en puerto 3000 (interno Docker)");
-});
+const PORT = 3000;
+app.listen(PORT, () => console.log("API lista en puerto", PORT));
+client.initialize();
