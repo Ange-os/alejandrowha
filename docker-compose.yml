@@ -11,7 +11,7 @@ services:
     restart: always
     networks:
       - wpp_internal_net
-    volumes:
-      - ./whatsapp/wwebjs_auth:/home/node/app/wwebjs_auth
     ports:
-      - "3000:3000"
+      - "3001:3000"        # Puerto externo 3001 → interno 3000
+    volumes:
+      - ./wwebjs_auth:/home/node/app/wwebjs_auth

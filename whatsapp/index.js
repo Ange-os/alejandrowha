@@ -1,68 +1,110 @@
 import express from "express";
+import pkg from "whatsapp-web.js";
 import qrcode from "qrcode";
-import { Client, LocalAuth } from "whatsapp-web.js";
+import fs from "fs";
+
+const { Client, LocalAuth } = pkg;
 
 const app = express();
 app.use(express.json());
 
-// WhatsApp client
+let qrCodeData = null;
+let clientReady = false;
+
+// --- CLIENTE WHATSAPP ---
 const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
-        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
+        headless: true,
+        args: [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+        ],
     },
 });
 
-// Generar QR en variable temporal
-let qrImage = null;
-
-// Eventos
-client.on("qr", async (qr) => {
-    qrImage = await qrcode.toDataURL(qr);
-    console.log("QR actualizado, listo para escanear.");
+// LOGS
+client.on("qr", (qr) => {
+    console.log("QR recibido, escanea para iniciar sesión.");
+    qrcode.toDataURL(qr, (err, url) => {
+        qrCodeData = url;
+    });
 });
 
 client.on("ready", () => {
-    console.log("WhatsApp conectado exitosamente.");
+    clientReady = true;
+    qrCodeData = null;
+    console.log("WhatsApp listo!");
 });
 
 client.on("authenticated", () => {
-    console.log("Autenticado!");
+    console.log("Autenticado correctamente.");
 });
 
-client.on("auth_failure", msg => {
-    console.log("ERROR de autenticación:", msg);
+client.on("auth_failure", () => {
+    console.log("❌ Falla de autenticación.");
 });
 
-// Endpoints
+client.on("disconnected", (reason) => {
+    console.log("❌ Cliente desconectado:", reason);
+    clientReady = false;
+});
+
+client.initialize();
+
+// --- API ENDPOINTS ---
+
+// GET QR COMO PNG
 app.get("/qr.png", (req, res) => {
-    if (!qrImage) return res.status(503).send("QR aún no generado.");
-    const base64 = qrImage.split(",")[1];
-    const buffer = Buffer.from(base64, "base64");
-    res.setHeader("Content-Type", "image/png");
-    res.send(buffer);
+    if (!qrCodeData) {
+        return res.status(503).send("QR no disponible aún.");
+    }
+
+    const img = Buffer.from(qrCodeData.split(",")[1], "base64");
+    res.writeHead(200, {
+        "Content-Type": "image/png",
+        "Content-Length": img.length,
+    });
+    res.end(img);
 });
 
-app.post("/send-message", async (req, res) => {
-    const { number, message } = req.body;
+// ESTADO DEL SERVICIO
+app.get("/status", (req, res) => {
+    res.json({
+        whatsapp: clientReady ? "ready" : "pending",
+        qr_available: qrCodeData ? true : false,
+    });
+});
 
-    if (!number || !message)
-        return res.status(400).json({ error: "number y message son requeridos" });
-
+// ENVIAR MENSAJE
+app.post("/send", async (req, res) => {
     try {
-        const finalNumber = number.includes("@c.us")
-            ? number
-            : `${number}@c.us`;
+        if (!clientReady) {
+            return res.status(400).json({ error: "WhatsApp no está listo todavía." });
+        }
 
-        await client.sendMessage(finalNumber, message);
+        const { to, message } = req.body;
 
-        res.json({ status: "sent", number, message });
+        if (!to || !message) {
+            return res.status(400).json({ error: "Faltan parámetros: to, message" });
+        }
+
+        const chatId = to.includes("@c.us") ? to : `${to}@c.us`;
+
+        await client.sendMessage(chatId, message);
+
+        console.log(`Mensaje enviado a ${chatId}: ${message}`);
+
+        res.json({ status: "sent", to: chatId });
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Error al enviar mensaje" });
+        console.error("Error enviando mensaje:", err);
+        res.status(500).json({ error: "Error enviando mensaje." });
     }
 });
 
+// API EN PUERTO 3000
 const PORT = 3000;
-app.listen(PORT, () => console.log("API lista en puerto", PORT));
-client.initialize();
+app.listen(PORT, () => {
+    console.log("API lista en puerto " + PORT);
+});
