@@ -1,0 +1,15 @@
+version: "3.9"
+
+networks:
+  wpp_internal_net:
+    driver: bridge
+
+services:
+  whatsapp:
+    build: ./whatsapp
+    container_name: whatsapp-server
+    restart: always
+    networks:
+      - wpp_internal_net
+    volumes:
+      - ./wwebjs_auth:/home/node/wwebjs_auth
