@@ -6,10 +6,10 @@ networks:
 
 services:
   whatsapp:
-    build: ./whatsapp
+    build: .
     container_name: whatsapp-server
     restart: always
     networks:
       - wpp_internal_net
     volumes:
-      - ./wwebjs_auth:/home/node/wwebjs_auth
+      - ./wwebjs_auth:/home/node/app/wwebjs_auth

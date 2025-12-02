@@ -1,88 +1,73 @@
-import express from "express";
-import cors from "cors";
-import bodyParser from "body-parser";
-import qrcode from "qrcode";
-import { Client, LocalAuth, MessageMedia } from "whatsapp-web.js";
+const express = require("express");
+const qrcode = require("qrcode");
+const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
 
 const app = express();
-app.use(cors());
-app.use(bodyParser.json({ limit: "50mb" }));
+app.use(express.json());
 
 let qrData = null;
-let clientReady = false;
 
-// WhatsApp Client
 const client = new Client({
-  authStrategy: new LocalAuth(), // guarda sesión en .wwebjs_auth
-  puppeteer: {
-    headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"]
-  }
+    authStrategy: new LocalAuth({
+        dataPath: './wwebjs_auth'
+    }),
+    puppeteer: {
+        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+        headless: true
+    }
 });
 
-// QR event
+// EVENTO QR
 client.on("qr", async (qr) => {
-  qrData = await qrcode.toDataURL(qr);
+    console.log("📲 Nuevo QR generado");
+    qrData = qr; 
 });
 
-// Ready event
+// EVENTO READY
 client.on("ready", () => {
-  clientReady = true;
-  console.log("WhatsApp: Conectado");
+    console.log("✅ WhatsApp conectado y listo");
 });
 
-// Init
+// LOG DE ERRORES
+client.on("auth_failure", () => console.log("❌ Falló la autenticación"));
+client.on("disconnected", () => console.log("⚠ Cliente desconectado"));
+
 client.initialize();
 
-// ------------------------------------------
-// API ENDPOINTS
-// ------------------------------------------
+// ============ ENDPOINTS ============
 
-app.get("/qr", (req, res) => {
-  res.json({
-    qr: qrData,
-    ready: clientReady
-  });
+// QR como imagen PNG
+app.get("/qr.png", async (req, res) => {
+    if (!qrData) return res.status(404).send("QR no disponible");
+
+    const png = await qrcode.toBuffer(qrData);
+    res.setHeader("Content-Type", "image/png");
+    res.send(png);
 });
 
-app.get("/status", (req, res) => {
-  res.json({
-    ready: clientReady
-  });
-});
-
+// Enviar mensaje
 app.post("/send-message", async (req, res) => {
-  try {
-    const { number, message } = req.body;
+    try {
+        let { number, message } = req.body;
+        
+        if (!number || !message) {
+            return res.status(400).json({ error: "Falta number o message" });
+        }
 
-    if (!clientReady) return res.status(400).json({ error: "WhatsApp no está conectado" });
+        number = number + "@c.us";
 
-    await client.sendMessage(formatNumber(number), message);
-    res.json({ status: "sent" });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+        await client.sendMessage(number, message);
+
+        console.log(`📤 Mensaje enviado a ${number}`);
+
+        res.json({ status: "ok" });
+    } catch (err) {
+        console.error("❌ Error enviando mensaje", err);
+        res.status(500).json({ error: "Error interno" });
+    }
 });
 
-app.post("/send-media", async (req, res) => {
-  try {
-    const { number, mediaBase64, filename, mimetype } = req.body;
-    const media = new MessageMedia(mimetype, mediaBase64, filename);
-
-    await client.sendMessage(formatNumber(number), media);
-    res.json({ status: "sent" });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// helper
-function formatNumber(num) {
-  const clean = num.replace(/\D/g, "");
-  return clean + "@c.us";
-}
-
-// Run server
+// Servidor web interno
 app.listen(3000, () => {
-  console.log("API WhatsApp corriendo en http://localhost:3000");
+    console.log("🌐 API WhatsApp lista en puerto 3000 (interno Docker)");
 });
